@@ -1,0 +1,28 @@
+# Simulation build products
+sim/*.vvp
+sim/*.vcd
+*.vcd
+*.vvp
+
+# iCEcube2 / Synplify
+sbt/
+synth/icecube/
+*.log
+*.bak
+*_sbt.project
+Log/
+
+# Vivado
+*.jou
+*.str
+.Xil/
+vivado*.log
+*.cache/
+*.runs/
+*.hw/
+*.sim/
+
+# Editor / OS
+.vscode/
+Thumbs.db
+.DS_Store
