@@ -14,8 +14,9 @@ acc <- acc + (a * b)      one MAC per clock while en is asserted
 
 ## Status
 
-- [ ] RTL complete, simulation passing
-- [ ] Synthesised on iCE40 HX1K (Go Board, iCEcube2)
+- [x] RTL complete, simulation passing (16/16, ~150k checks)
+- [x] Verified at four parameter configurations
+- [x] Synthesised and timing-closed on iCE40 HX1K (Go Board, iCEcube2)
 - [ ] Synthesised on Artix-7 (Vivado)
 - [ ] Pipelined variant measured
 - [ ] Running on hardware
@@ -150,21 +151,67 @@ assuming — a LUT-built multiplier here means something went wrong.
 
 ## Results
 
-<!-- Fill these in as you measure them. Numbers are the point of the project. -->
+### iCE40 HX1K, VQ100 — iCEcube2 2020.12, Synplify Pro, post-route
 
-| Target | Fabric | Fmax | LUTs / ALMs | Registers | DSP | Notes |
-|---|---|---|---|---|---|---|
-| iCE40 HX1K | LUT-only | _TBD_ | _TBD_ | _TBD_ | 0 | unpipelined |
-| iCE40 HX1K | LUT-only | _TBD_ | _TBD_ | _TBD_ | 0 | pipelined |
-| Artix-7 | DSP48 | _TBD_ | _TBD_ | _TBD_ | _TBD_ | unpipelined |
-| Artix-7 | DSP48 | _TBD_ | _TBD_ | _TBD_ | _TBD_ | pipelined |
+| Metric | Value |
+|---|---|
+| **Fmax** | **132.64 MHz** |
+| Target (Go Board oscillator) | 25 MHz |
+| Slack at 25 MHz | +32.46 ns |
+| Logic cells | 227 / 1280 (17.7%) |
+| &nbsp;&nbsp;combinational | 194 |
+| &nbsp;&nbsp;sequential | 33 |
+| LUT4s | 224 |
+| Carry cells | 69 |
+| Registers | 33 (32 accumulator + 1 sticky overflow) |
+| Logic tiles (PLBs) | 46 / 160 (28.8%) |
+| Block RAM | 0 / 16 |
+| DSP blocks | none — the HX1K has no hard multipliers |
+| I/O | 62 / 72 |
 
-The same RTL on a fabric with hard multipliers and one without is the result
-worth writing up: the area and frequency gap between them is the reason AI
-accelerators put hard MAC arrays in silicon instead of building them out of
-generic logic.
+The multiplier is built entirely from LUT4s and carry chains, since this part
+has no DSP blocks. At 25 MHz the design has 5.3x frequency headroom, so the
+pipelined variant is not needed for this board — it remains an experiment
+rather than a fix.
 
-Critical path (both targets): `acc_q → multiplier → 32-bit adder → acc_q`.
+Synthesis-time estimate was 85.3 MHz and post-placement was 122.35 MHz, both
+conservative against the 132.64 MHz post-route result. Quote the post-route
+number; the earlier two are estimates against modelled routing.
+
+### Critical path
+
+```
+acc_q[0]  ->  31-stage carry chain (the multiply-accumulate)
+          ->  un1_product_2_cry_30_c_RNIDP2L2H   (SB_LUT4)
+          ->  ovf_q_RNO_0                        (SB_LUT4)
+          ->  ovf_q / D
+```
+
+| | ps |
+|---|---|
+| Clock-to-Q | 540 |
+| Data path | 6628 |
+| Setup | 372 |
+| **Register-to-register total** | **7540** |
+
+The path ends at the **overflow flag**, not at the accumulator. `acc_ovf`
+compares the sign bits of `acc_q`, `product` and `sum`, so it cannot begin
+evaluating until the entire carry chain has resolved, and then needs two more
+LUT levels on top. `acc_q[31]` finishes with 1.8 ns more slack than `ovf_q`
+does.
+
+Three gates that look free in the source turn out to set Fmax, because they
+sit downstream of everything else. A sticky flag does not need to be correct
+in the same cycle it is raised, so registering `acc_ovf` and OR-ing it in one
+cycle later would take this logic off the critical path entirely, at the cost
+of the flag lagging by one cycle.
+
+### Note on I/O
+
+Exposing the full 32-bit `acc` as a top-level port consumes 62 of the 72
+available pins and saturates three of the four I/O banks. That is fine for a
+synthesis measurement, but a board-level wrapper driving the LEDs and
+seven-segment display must keep `acc` internal.
 
 ## Next
 
