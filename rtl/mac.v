@@ -96,8 +96,8 @@ module mac #(
     //             the operand is declared signed, or you will shift in zeros
     //             and turn negative numbers into large positive ones.
     //=========================================================================
-    wire signed [31:0] rounded = acc + 32'sd64;
-    wire signed [31:0] scaled  = rounded >>> 7;
+    wire signed [ACC_WIDTH-1:0] rounded = acc_q + (1 <<< (FRAC_BITS-1));
+    wire signed [ACC_WIDTH-1:0] scaled  = rounded >>> FRAC_BITS;
 
     //=========================================================================
     // TODO 5 -- does the scaled value fit in WIDTH bits?
@@ -110,7 +110,8 @@ module mac #(
     // wrecks a network's output. Clamping merely loses a little magnitude.
     // Every production DSP datapath saturates.
     //=========================================================================
-    wire in_range = (scaled[31:7] == 25'd0) || (scaled[31:7] == {25{1'b1}});
+    wire in_range = (scaled[ACC_WIDTH-1:WIDTH-1] == {(ACC_WIDTH-WIDTH+1){1'b0}}) ||
+                    (scaled[ACC_WIDTH-1:WIDTH-1] == {(ACC_WIDTH-WIDTH+1){1'b1}});
 
     //=========================================================================
     // TODO 6 -- the register

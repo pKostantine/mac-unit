@@ -80,6 +80,22 @@ No waveform inspection required unless something breaks.
 
 Roughly 150,000 checks per run.
 
+`tb/tb_param.v` is a second, simpler testbench that runs at *any* parameter
+set. It exists because `tb_mac.v` is pinned to `WIDTH=8` and therefore cannot
+catch a hardcoded shift amount or bit slice in the output path. The design is
+verified at four configurations:
+
+| WIDTH | ACC_WIDTH | FRAC_BITS | Result |
+|---|---|---|---|
+| 8 | 32 | 7 | pass |
+| 4 | 16 | 3 | pass |
+| 6 | 24 | 5 | pass |
+| 12 | 40 | 9 | pass |
+
+This caught a real defect: an earlier revision hardcoded the output-path
+widths, which passed every test at 8 bits and failed at all three of the
+other configurations.
+
 The testbench was validated by mutation: deliberately breaking the RTL
 (unsigned multiply, ignoring `en`, dropping saturation, truncating instead of
 rounding, wrong `clear`/`en` priority) makes it fail, each bug caught by the
@@ -91,6 +107,7 @@ test aimed at it. A testbench that has never caught a bug has not been tested.
 
 ```sh
 make -f sim/Makefile sim      # compile and run
+make -f sim/Makefile sweep    # run tb_param.v at four parameter sets
 make -f sim/Makefile wave     # run, then open GTKWave
 make -f sim/Makefile lint     # syntax and width check the RTL alone
 ```
@@ -100,6 +117,7 @@ Windows, or without `make`:
 ```
 run.bat
 run.bat wave
+run_param.bat
 ```
 
 Or by hand:
@@ -158,9 +176,11 @@ actually works. `mac.v` is parameterised and drops in unchanged.
 
 ```
 rtl/mac.v          the design
-tb/tb_mac.v        self-checking testbench
+tb/tb_mac.v        self-checking testbench (WIDTH=8)
+tb/tb_param.v      parameter-sweep testbench (any WIDTH)
 sim/Makefile       simulation driver
 synth/mac.sdc      timing constraints
 run.bat            Windows simulation script
+run_param.bat      Windows parameter sweep
 docs/              report, screenshots
 ```
