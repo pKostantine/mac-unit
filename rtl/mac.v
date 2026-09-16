@@ -96,9 +96,13 @@ module mac #(
     // Note from synthesis: this logic sits on the critical path. It cannot
     // begin evaluating until the whole carry chain has resolved, then needs
     // two more LUT levels, so it finishes 1.8 ns after acc_q[31] does.
-    // Registering acc_ovf and OR-ing it in a cycle later would remove it
-    // from the critical path -- a sticky flag need not be correct in the
-    // cycle it is raised.
+    // Naively registering acc_ovf does NOT fix this: the flag would still be
+    // computed from sum, so the carry chain stays in the path. Measured fix
+    // (synth/dsp_experiment/mac_ovf_reg.v): compare registered operand signs
+    // against the registered accumulator one cycle later, dropping the
+    // dependency on sum. 146 -> 115 LUTs, 289.0 -> 356.5 MHz on Artix-7, at
+    // the cost of the flag lagging one cycle. Kept same-cycle here so the
+    // testbench's overflow timing checks hold. See README.md.
     //-------------------------------------------------------------------------
     wire acc_ovf = (acc_q[ACC_WIDTH-1] == product[PROD_WIDTH-1]) &&
                    (sum[ACC_WIDTH-1]   != acc_q[ACC_WIDTH-1]);

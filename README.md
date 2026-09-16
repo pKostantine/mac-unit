@@ -3,7 +3,7 @@
 A parameterised signed multiply-accumulate datapath in Verilog-2001, with a
 self-checking testbench, synthesis results, and a working hardware demo.
 
-![MAC unit running on a Nandland Go Board](docs/img/board.jpg)
+![MAC unit running on a Nandland Go Board](docs/report/board.jpg)
 
 The multiply-accumulate is the atomic operation of neural network inference:
 a dense layer, a convolution and a matrix multiply are all dot products, and
@@ -217,9 +217,9 @@ does.
 
 Three gates that look free in the source turn out to set Fmax, because they
 sit downstream of everything else. A sticky flag does not need to be correct
-in the same cycle it is raised, so registering `acc_ovf` and OR-ing it in one
-cycle later would take this logic off the critical path entirely, at the cost
-of the flag lagging by one cycle.
+in the same cycle it is raised, which suggests deferring it -- see
+[Deferring overflow detection](#deferring-overflow-detection) for the measured
+result, including why the obvious version of that fix does not work.
 
 ### Artix-7 XC7A35T-1L (csg324) — Vivado 2026.1, post-route
 
@@ -231,6 +231,7 @@ treatment of the I/O. `synth/mac_a7.xdc`.
 | `mac` — the design as shipped | 146 | 33 | **0** | 35 | 1.540 ns | **289.0 MHz** |
 | `mac_core` — datapath only, LUT | 97 | 32 | 0 | 24 | 2.187 ns | 355.5 MHz |
 | `mac_core` — datapath only, DSP | 1 | 0 | **1** | 0 | see below | <= 464.3 MHz |
+| `mac_ovf_reg` — deferred overflow | **115** | 35 | 0 | 27 | 2.195 ns | **356.5 MHz** |
 
 At 289 MHz the Artix-7 is 2.2x the iCE40's 132.64 MHz — a fair reflection of a
 28 nm part against a 40 nm one, measured the same way on the same source.
@@ -278,6 +279,61 @@ The critical path is the same endpoint Synplify found on the iCE40:
 architectures, two independent tools, one bottleneck — the sticky overflow
 flag that the source comments predicted.
 
+### Deferring overflow detection
+
+The obvious fix for the critical path above -- register `acc_ovf`, OR it in a
+cycle later -- **does not work**. The flag is still computed from `sum`, so
+`acc_q -> carry chain -> LUT` stays in the path and only the destination flop
+changes.
+
+Removing the path means dropping the dependency on `sum` entirely.
+`synth/dsp_experiment/mac_ovf_reg.v` latches the two operand sign bits at the
+same edge the accumulator updates, then compares one cycle later against the
+*registered* accumulator:
+
+```verilog
+// at edge N: acc_q <= sum, sign_acc_q <= acc_q[MSB], sign_prd_q <= product[MSB]
+wire ovf_detect = (sign_acc_q == sign_prd_q) &&
+                  (acc_q[ACC_WIDTH-1] != sign_acc_q);
+```
+
+Every term is a flop output, so the detector is flop -> one LUT -> flop.
+Post-route on XC7A35T-1L at the same 5.000 ns constraint:
+
+| | `mac` | `mac_ovf_reg` | change | `mac_core` (bare) |
+|---|---|---|---|---|
+| LUTs | 146 | **115** | -31 (-21%) | 97 |
+| FFs | 33 | 35 | +2 | 32 |
+| CARRY4 | 35 | 27 | -8 | 24 |
+| WNS @ 5 ns | 1.540 ns | **2.195 ns** | +0.655 ns | 2.187 ns |
+| Fmax | 289.0 MHz | **356.5 MHz** | +67.5 MHz | 355.5 MHz |
+| Path ends at | `ovf_q` | `acc_q[29]` | -- | `acc_q[29]` |
+
+New critical path: `acc_q_reg[1] -> LUT3 -> 8x CARRY4 -> acc_q_reg[29]` -- the
+accumulator's own carry chain, with the overflow logic gone from it. Worst hold
+path is now `sign_prd_q_reg -> ovf_q_i_1 (LUT5) -> ovf_q_reg`, 0.259 ns.
+
+Two things fall out of this:
+
+- At 356.5 MHz the deferred variant is indistinguishable from the bare datapath
+  at 355.5 MHz. Overflow detection, rounding and saturation now cost **no
+  frequency at all**; both designs are limited by the same accumulator carry
+  chain, which is the real floor.
+- It is also **smaller** than the original -- 31 fewer LUTs and 8 fewer carry
+  chains -- for two flops and one extra control set. Computing overflow from
+  `sum` forces a 32-bit comparison against the output of a 32-bit adder;
+  reading three registered bits collapses that to one LUT5.
+
+So the cost of correctness is not 49 LUTs and 66 MHz. That is the cost of
+computing it *in the same cycle*. Deferred by one cycle it is 18 LUTs and
+nothing.
+
+**This is a synthesis measurement, not a drop-in replacement.** `overflow`
+asserts one cycle late, so `tb/tb_mac.v` fails its overflow-timing checks
+against this variant. `rtl/mac.v` deliberately still raises the flag in the
+same cycle; adopting the deferred structure means updating the testbench
+expectations first.
+
 ### Note on I/O
 
 Exposing the full 32-bit `acc` as a top-level port consumes 62 of the 72
@@ -306,7 +362,7 @@ The first four ROM entries are all `0.5 x 0.5`, so the running total should
 climb 0.25, 0.50, 0.75, 1.00. Q1.7 cannot represent 1.00 -- it tops out at
 0.992 -- so the fourth press clamps and raises `sat`:
 
-![Display stepping 20, 40, 60, 7F with the saturation LED lighting on the fourth press](docs/img/sequence.jpg)
+![Display stepping 20, 40, 60, 7F with the saturation LED lighting on the fourth press](docs/report/sequence.jpg)
 
 The saturation LED is dark in the first three frames and lit in the fourth.
 
@@ -366,5 +422,6 @@ sim/Makefile       simulation driver
 synth/mac.sdc      timing constraints
 run.bat            Windows simulation script
 run_param.bat      Windows parameter sweep
-docs/img/          board photographs
+synth/dsp_experiment/  DSP48 and overflow-deferral experiments
+docs/report/       LaTeX report, board photographs, Vivado captures
 ```
